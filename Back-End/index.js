@@ -54,108 +54,6 @@ app.post("/login", async (req, res) => {
   }
 });
 
-app.get("/files/get", async (req, res) => {
-  try {
-    const users = await File.find({});
-    res.status(200).json(users);
-  } catch (error) {
-    console.error("Error fetching users:", error);
-    res.status(500).json({ error: "Failed to fetch users" });
-  }
-});
-
-app.put("/user/update/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-    const { username, password, phone, fileIndex, fileData } = req.body;
-    const user = await File.findById(id);
-    if (!user) {
-      return res.status(404).json({
-        status: 404,
-        message: "User not found !!",
-      });
-    }
-    if (username || password || phone) {
-      if (username) user.username = username;
-      if (password) user.password = password;
-      if (phone) user.phone = phone;
-    }
-    if (fileData !== undefined) {
-      if (fileIndex !== undefined) {
-        if (
-          !Array.isArray(user.file) ||
-          fileIndex < 0 ||
-          fileIndex >= user.file.length
-        ) {
-          return res.status(400).json({
-            status: 400,
-            message: "Invalid file index !!",
-          });
-        }
-        user.file[fileIndex] = fileData;
-      } else {
-        user.file.push(fileData);
-      }
-    }
-    await user.save();
-    res.status(200).json({
-      status: 200,
-      message: "User updated successfully",
-      data: user,
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      status: 500,
-      error: error.message,
-    });
-  }
-});
-
-app.delete("/user/delete/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-    const { fileIndex } = req.body;
-    const user = await File.findById(id);
-    if (!user) {
-      return res.status(404).json({
-        status: 404,
-        message: "User not found !!",
-      });
-    }
-    if (fileIndex !== undefined) {
-      if (
-        !Array.isArray(user.file) ||
-        fileIndex < 0 ||
-        fileIndex >= user.file.length
-      ) {
-        return res.status(400).json({
-          status: 400,
-          message: "Invalid file index !!",
-        });
-      }
-      user.file.splice(fileIndex, 1);
-      await user.save();
-      return res.status(200).json({
-        status: 200,
-        message: "File entry deleted successfully",
-        data: user,
-      });
-    }
-    await File.findByIdAndDelete(id);
-    res.status(200).json({
-      status: 200,
-      message: "User deleted successfully",
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      status: 500,
-      error: error.message,
-    });
-  }
-});
-
 app.post("/otp/generate", async (req, res) => {
   try {
     const { username } = req.body;
@@ -238,6 +136,74 @@ app.get("/user/:id", async (req, res) => {
     res
       .status(500)
       .json({ status: "Error retrieving user", error: error.message });
+  }
+});
+
+const totalSeats = 80;
+app.get("/available-seats", async (req, res) => {
+  try {
+    const users = await File.find({});
+    const allReservedSeats = users.flatMap((user) =>
+      user.reservedSeats.map((seat) => seat.seatNumber)
+    );
+
+    const availableSeats = [];
+    for (let seatNumber = 1; seatNumber <= totalSeats; seatNumber++) {
+      if (!allReservedSeats.includes(seatNumber)) {
+        availableSeats.push(seatNumber);
+      }
+    }
+
+    res.status(200).json({ availableSeats });
+  } catch (error) {
+    res.status(500).json({ status: error.message });
+  }
+});
+
+app.post("/reserve-seats", async (req, res) => {
+  try {
+    const { username, seatNumbers } = req.body;
+    const user = await File.findOne({ username });
+
+    if (!user) {
+      return res.status(404).json({ status: "User not found" });
+    }
+
+    const allReservedSeats = await File.aggregate([
+      { $unwind: "$reservedSeats" },
+      {
+        $group: {
+          _id: null,
+          reservedSeats: { $addToSet: "$reservedSeats.seatNumber" },
+        },
+      },
+    ]);
+
+    const reservedSeats = allReservedSeats[0]?.reservedSeats || [];
+    const alreadyReserved = seatNumbers.filter((seat) =>
+      reservedSeats.includes(seat)
+    );
+
+    if (alreadyReserved.length > 0) {
+      return res.status(400).json({
+        status: "Some seats are already reserved",
+        alreadyReserved,
+      });
+    }
+
+    if (seatNumbers.some((seat) => seat < 1 || seat > totalSeats)) {
+      return res.status(400).json({
+        status: "Some selected seats are out of range",
+      });
+    }
+
+    const newSeats = seatNumbers.map((seat) => ({ seatNumber: seat }));
+    user.reservedSeats.push(...newSeats);
+    await user.save();
+
+    res.status(200).json({ status: "Seats reserved successfully" });
+  } catch (error) {
+    res.status(500).json({ status: error.message });
   }
 });
 
